@@ -1,0 +1,99 @@
+name: payment-service-async-tests
+
+x-app-environment: &app-environment
+  DATABASE_URL: postgresql+asyncpg://test_runner:isolated-test-only@db:5432/payments_test
+  RABBITMQ_URL: amqp://test_runner:isolated-test-only@rabbitmq:5672/payments_test
+  METRICS_ENABLED: "true"
+  API_KEY: isolated-test-api-key
+  WEBHOOK_SIGNING_SECRET: isolated-test-signing-key-32-bytes-minimum
+
+# Standalone test stack: never merge this file with compose.yaml.
+services:
+  migrator:
+    profiles: ["runtime"]
+    build: .
+    image: payment-service:test
+    command: alembic upgrade head
+    environment: *app-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    profiles: ["runtime"]
+    image: payment-service:test
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    environment: *app-environment
+    ports: ["127.0.0.1:58000:8000"]
+    restart: unless-stopped
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  payment-worker:
+    profiles: ["runtime"]
+    image: payment-service:test
+    ports: ["127.0.0.1:59001:9001"]
+    command: faststream run backend.payments.worker:app
+    environment: *app-environment
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  publisher:
+    profiles: ["runtime"]
+    image: payment-service:test
+    ports: ["127.0.0.1:59002:9002"]
+    command: python -m backend.outbox.publisher
+    environment: *app-environment
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: payments_test
+      POSTGRES_USER: test_runner
+      POSTGRES_PASSWORD: isolated-test-only
+    ports:
+      - "127.0.0.1:55433:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_runner -d payments_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  rabbitmq:
+    build:
+      context: .
+      dockerfile: Dockerfile.rabbitmq
+    image: payment-rabbitmq:test
+    environment:
+      RABBITMQ_DEFAULT_USER: test_runner
+      RABBITMQ_DEFAULT_PASS: isolated-test-only
+      RABBITMQ_DEFAULT_VHOST: payments_test
+    ports:
+      - "127.0.0.1:55673:5672"
+      - "127.0.0.1:55692:15692"
+    tmpfs:
+      - /var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

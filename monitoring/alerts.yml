@@ -1,0 +1,21 @@
+groups:
+  - name: payment-service
+    rules:
+      - alert: PaymentMetricsUnavailable
+        expr: up{job=~"payment-.*"} == 0
+        for: 1m
+      - alert: PaymentDatabaseMetricsUnavailable
+        expr: database_metrics_collection_success == 0
+        for: 1m
+      - alert: PaymentPublisherStalled
+        expr: time() - publisher_last_success_timestamp_seconds > 60
+        for: 1m
+      - alert: PaymentOutboxDelayed
+        expr: outbox_oldest_pending_age_seconds > 60
+        for: 1m
+      - alert: PaymentDeadLettersPresent
+        expr: rabbitmq_queue_messages{queue="webhook_dlq"} > 0
+        for: 1m
+      - alert: PaymentWebhookErrors
+        expr: sum(rate(webhook_requests_total{result=~"http_error|network_error|blocked"}[5m])) > 0.1
+        for: 5m

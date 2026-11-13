@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 15s
+rule_files:
+  - alerts.yml
+scrape_configs:
+  - job_name: payment-api
+    static_configs:
+      - targets: ["api:8000"]
+  - job_name: payment-worker
+    static_configs:
+      - targets: ["payment-worker:9001"]
+  - job_name: payment-publisher
+    static_configs:
+      - targets: ["publisher:9002"]
+  - job_name: payment-rabbitmq
+    metrics_path: /metrics/per-object
+    static_configs:
+      - targets: ["rabbitmq:15692"]
